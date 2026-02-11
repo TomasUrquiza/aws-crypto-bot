@@ -1,0 +1,57 @@
+import json
+import urllib.request
+import ssl
+import boto3
+import time
+from decimal import Decimal
+
+# Conexión a la base de datos (fuera del handler para reutilizar conexión)
+dynamodb = boto3.resource('dynamodb')
+table = dynamodb.Table('CryptoHistory')
+
+def lambda_handler(event, context):
+    url = "https://api.coinbase.com/v2/prices/BTC-USD/spot"
+    
+    print("🔹 Consultando Coinbase y guardando en DynamoDB...")
+
+    try:
+        # 1. Obtener Precio
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as response:
+            data_raw = response.read().decode('utf-8')
+            data = json.loads(data_raw)
+            
+        # Coinbase devuelve string, lo convertimos a Decimal para la DB
+        price_str = data['data']['amount']
+        price = Decimal(price_str)
+        
+        # 2. Generar Timestamp único
+        now = str(int(time.time())) # Ejemplo: "1707505000"
+        
+        # 3. Estrategia
+        decision = "COMPRAR" if price < 96000 else "VENDER"
+        
+        # 4. GUARDAR EN DYNAMODB
+        table.put_item(
+            Item={
+                'timestamp': now,
+                'currency': 'BTC',
+                'price': price,
+                'action': decision
+            }
+        )
+        
+        print(f"💾 GUARDADO | BTC: ${price} | ID: {now}")
+        
+        return {
+            'statusCode': 200,
+            'body': json.dumps('Datos guardados exitosamente.')
+        }
+
+    except Exception as e:
+        print(f"❌ ERROR: {e}")
+        return {'statusCode': 500, 'body': str(e)}
